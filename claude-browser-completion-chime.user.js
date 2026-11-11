@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Browser Completion Chime
 // @namespace    https://github.com/lytken-de/claude-browser-completion-chime
-// @version      1.7.0
+// @version      1.8.0
 // @description  Plays an audio notification when Claude.ai finishes generating a response (when the stop button disappears).
 // @author       lytken-de
 // @license      MIT
@@ -23,6 +23,8 @@
     SHOW_NOTIFICATION: true,    // browser notification (asks for permission on your first click on the page)
     ONLY_IN_BACKGROUND: false,  // true = only chime/notify when the tab is not focused
     MIN_DURATION_MS: 1500,      // the stop button must have been visible at least this long, otherwise no chime
+    DONE_DELAY_MS: 2000,        // the stop button must stay gone this long before it counts as "done"
+                                // (if it comes back within this time, it's the same response – no chime)
     VOLUME: 1.0,                // 1.0 = the sound file's own volume, 0.5 = half
     KEEP_AWAKE: false,          // very faint noise while Claude works, so Bluetooth audio doesn't fall asleep
     SILENCE_BEFORE_MS: 0,       // extra silence before the chime
@@ -149,25 +151,47 @@
   }
 
   // ---------- Watch for the stop button ----------
+  // The stop button can disappear briefly in the middle of a response (e.g. while the page
+  // re-renders). So "done" only counts once it has stayed gone for DONE_DELAY_MS.
+  // If Claude stops to ask for your approval (e.g. a tool permission), the button stays
+  // gone – and that chimes too, because Claude is waiting for you.
   let working = false;
   let startTime = 0;
   let startPath = location.pathname;
+  let goneAt = 0;
+  let pendingFinish = null;
 
   function check() {
     const nowWorking = stopButtons().length > 0;
-    if (nowWorking === working) return;
 
     if (nowWorking) {
-      working = true;
-      startTime = Date.now();
-      startPath = location.pathname;
-      log('Claude is working', startPath);
-      startKeepAwake();
+      if (pendingFinish) {
+        clearTimeout(pendingFinish);
+        pendingFinish = null;
+        log('Stop button back after', Date.now() - goneAt, 'ms – same response');
+      }
+      if (!working) {
+        working = true;
+        startTime = Date.now();
+        startPath = location.pathname;
+        log('Claude is working', startPath);
+        startKeepAwake();
+      }
       return;
     }
 
+    if (working && !pendingFinish) {
+      goneAt = Date.now();
+      log('Stop button gone – waiting', CONFIG.DONE_DELAY_MS, 'ms to be sure');
+      pendingFinish = setTimeout(finish, CONFIG.DONE_DELAY_MS);
+    }
+  }
+
+  function finish() {
+    pendingFinish = null;
+    if (stopButtons().length > 0) return; // came back at the last moment – keep waiting
     working = false;
-    const duration = Date.now() - startTime;
+    const duration = goneAt - startTime;
     // If you switched to another chat yourself, that's not "done".
     if (location.pathname !== startPath) { log('Page changed – no chime'); stopKeepAwake(); return; }
     if (duration < CONFIG.MIN_DURATION_MS) { log('Too short –', duration, 'ms'); stopKeepAwake(); return; }
@@ -187,5 +211,5 @@
   // Test from the console: claudeChimeTest()
   window.claudeChimeTest = () => { playChime(); return 'Played test chime'; };
 
-  console.log('[Claude-chime] v1.7.0 loaded – test with claudeChimeTest()');
+  console.log('[Claude-chime] v1.8.0 loaded – test with claudeChimeTest()');
 })();
