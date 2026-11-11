@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Browser Completion Chime
 // @namespace    https://github.com/lytken-de/claude-browser-completion-chime
-// @version      1.8.0
+// @version      1.8.1
 // @description  Plays an audio notification when Claude.ai finishes generating a response (when the stop button disappears).
 // @author       lytken-de
 // @license      MIT
@@ -31,7 +31,10 @@
     DEBUG: false,               // true = log state changes to the console
   };
 
-  const STOP_PATTERN = /\b(stop|interrupt)\b/i;
+  // Fallback only: the whole label must BE a stop label. (Message action buttons carry the
+  // full message text in their label, e.g. "Show message actions for You said: … stop …",
+  // so a loose "contains stop" match would fire while scrolling through old messages.)
+  const STOP_PATTERN = /^(stop|stop response|stop generating|interrupt)$/i;
   const log = (...a) => CONFIG.DEBUG && console.log('[Claude-chime]', ...a);
 
   // ---------- Find the stop button ----------
@@ -47,9 +50,8 @@
     if (known.length) return known;
     // Fallback: anything acting as a button whose label mentions stop/interrupt.
     return [...document.querySelectorAll('button,[role="button"]')].filter((b) => {
-      const text = [b.getAttribute('aria-label'), b.getAttribute('title'), b.getAttribute('data-testid')]
-        .filter(Boolean).join(' ');
-      return STOP_PATTERN.test(text) && isVisible(b);
+      const labels = [b.getAttribute('aria-label'), b.getAttribute('title')].filter(Boolean);
+      return labels.some((l) => STOP_PATTERN.test(l.trim())) && isVisible(b);
     });
   }
 
@@ -211,5 +213,5 @@
   // Test from the console: claudeChimeTest()
   window.claudeChimeTest = () => { playChime(); return 'Played test chime'; };
 
-  console.log('[Claude-chime] v1.8.0 loaded – test with claudeChimeTest()');
+  console.log('[Claude-chime] v1.8.1 loaded – test with claudeChimeTest()');
 })();
