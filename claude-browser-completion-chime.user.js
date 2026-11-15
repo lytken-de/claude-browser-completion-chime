@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Browser Completion Chime
 // @namespace    https://github.com/lytken-de/claude-browser-completion-chime
-// @version      1.9.0
+// @version      1.9.1
 // @description  Plays an audio notification when Claude.ai finishes generating a response, and shows a red dot on the tab while Claude is working.
 // @author       lytken-de
 // @license      MIT
@@ -162,13 +162,32 @@
   let dotIconLoading = false;
   let dotLink = null;
 
+  // Claude.ai updates its own tab icons from script and also overwrites any other icon
+  // link on the page. So while the dot is shown, Claude.ai's icons are switched off
+  // (rel renamed) and our icon is re-asserted whenever it gets overwritten.
+  const DISABLED_REL = 'claude-chime-disabled-icon';
+
   function originalIconLinks() {
     return [...document.querySelectorAll('link[rel~="icon"]')].filter((l) => l !== dotLink);
   }
 
+  function disableOriginalIcons() {
+    originalIconLinks().forEach((l) => {
+      l.dataset.chimeRel = l.rel;
+      l.rel = DISABLED_REL;
+    });
+  }
+
+  function restoreOriginalIcons() {
+    document.querySelectorAll('link[rel="' + DISABLED_REL + '"]').forEach((l) => {
+      l.rel = l.dataset.chimeRel || 'icon';
+      delete l.dataset.chimeRel;
+    });
+  }
+
   function buildDotIcon() {
     return new Promise((resolve) => {
-      const icon = originalIconLinks()[0];
+      const icon = originalIconLinks()[0] || document.querySelector('link[rel="' + DISABLED_REL + '"]');
       let img;
       try { img = new Image(); } catch (e) { resolve(null); return; }
       img.crossOrigin = 'anonymous';
@@ -204,6 +223,7 @@
     if (!on) {
       if (dotLink && dotLink.isConnected) {
         dotLink.remove();
+        restoreOriginalIcons();
         originalIconLinks().forEach((l) => { const h = l.href; l.href = h; }); // nudge the browser back to the normal icon
         log('Tab dot off');
       }
@@ -226,13 +246,12 @@
       if (!dotLink) {
         dotLink = document.createElement('link');
         dotLink.id = 'claude-chime-dot';
-        dotLink.rel = 'icon';
         dotLink.type = 'image/png';
-        dotLink.href = dotIconUrl;
       }
-      // Our icon must be the last one on the page to win; Claude.ai may add its own later.
-      const icons = document.querySelectorAll('link[rel~="icon"]');
-      if (icons[icons.length - 1] !== dotLink) {
+      if (originalIconLinks().length) disableOriginalIcons();          // Claude.ai's icons off (also new ones)
+      if (dotLink.rel !== 'icon') dotLink.rel = 'icon';
+      if (dotLink.getAttribute('href') !== dotIconUrl) dotLink.setAttribute('href', dotIconUrl); // undo overwrites
+      if (!dotLink.isConnected) {
         document.head.appendChild(dotLink);
         log('Tab dot on');
       }
@@ -302,9 +321,12 @@
     attributeFilter: ['aria-label', 'title', 'data-testid', 'style', 'class', 'hidden'],
   });
   setInterval(check, 1000); // safety net in case a change is missed
+  new MutationObserver(() => { if (working) setTabDot(true); }).observe(document.head, {
+    childList: true, subtree: true, attributes: true, attributeFilter: ['href', 'rel'],
+  });
 
   // Test from the console: claudeChimeTest()
   window.claudeChimeTest = () => { playChime(); return 'Played test chime'; };
 
-  console.log('[Claude-chime] v1.9.0 loaded – test with claudeChimeTest()');
+  console.log('[Claude-chime] v1.9.1 loaded – test with claudeChimeTest()');
 })();
