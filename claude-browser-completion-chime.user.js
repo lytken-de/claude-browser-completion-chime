@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Browser Completion Chime
 // @namespace    https://github.com/lytken-de/claude-browser-completion-chime
-// @version      1.9.1
+// @version      1.9.2
 // @description  Plays an audio notification when Claude.ai finishes generating a response, and shows a red dot on the tab while Claude is working.
 // @author       lytken-de
 // @license      MIT
@@ -201,9 +201,6 @@
           g.arc(24, 24, 7.5, 0, 2 * Math.PI);
           g.fillStyle = '#e5322d';
           g.fill();
-          g.lineWidth = 2;
-          g.strokeStyle = '#ffffff';
-          g.stroke();
           resolve(c.toDataURL('image/png'));
         } catch (e) { resolve(null); }
       };
@@ -328,5 +325,5 @@
   // Test from the console: claudeChimeTest()
   window.claudeChimeTest = () => { playChime(); return 'Played test chime'; };
 
-  console.log('[Claude-chime] v1.9.1 loaded – test with claudeChimeTest()');
+  console.log('[Claude-chime] v1.9.2 loaded – test with claudeChimeTest()');
 })();
