@@ -38,6 +38,7 @@ Edit the `CONFIG` block at the top of the script:
 |---|---|---|
 | `SHOW_NOTIFICATION` | `true` | Also shows a browser notification when the tab isn't focused. Clicking it brings you to the tab. You're asked for permission on your first click on the page. |
 | `TAB_DOT` | `'favicon'` | Red dot on the tab while Claude works. `'favicon'` draws it on the tab icon (falls back to the title if the icon can't be drawn), `'title'` puts 🔴 in front of the tab title, `'off'` disables it. |
+| `TAB_DOT_BLINK` | `true` | The dot blinks slowly (1 s on, 1 s off), so it stands out from the icon. `false` = steady dot. |
 | `ONLY_IN_BACKGROUND` | `false` | `true` = only chime when the tab isn't focused. |
 | `MIN_DURATION_MS` | `1500` | How long the stop button must have been visible before a chime is played. This does **not** delay the chime; it filters out quick replies. Use e.g. `10000` to only be notified about long waits. |
 | `DONE_DELAY_MS` | `2000` | How long the stop button must stay gone before the response counts as done. Prevents false chimes when the button blinks out mid-response. The chime comes this long after Claude finishes. |

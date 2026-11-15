@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Browser Completion Chime
 // @namespace    https://github.com/lytken-de/claude-browser-completion-chime
-// @version      1.9.2
+// @version      1.10.0
 // @description  Plays an audio notification when Claude.ai finishes generating a response, and shows a red dot on the tab while Claude is working.
 // @author       lytken-de
 // @license      MIT
@@ -23,6 +23,7 @@
     SHOW_NOTIFICATION: true,    // browser notification (asks for permission on your first click on the page)
     ONLY_IN_BACKGROUND: false,  // true = only chime/notify when the tab is not focused
     TAB_DOT: 'favicon',         // red dot on the tab while Claude works: 'favicon', 'title' (🔴 in the tab title) or 'off'
+    TAB_DOT_BLINK: true,        // the dot blinks slowly (1 s on, 1 s off), so it stands out from the icon
     MIN_DURATION_MS: 1500,      // the stop button must have been visible at least this long, otherwise no chime
     DONE_DELAY_MS: 2000,        // the stop button must stay gone this long before it counts as "done"
                                 // (if it comes back within this time, it's the same response – no chime)
@@ -158,9 +159,11 @@
   // (icon can't be loaded, or canvas is blocked by an anti-fingerprinting tool),
   // it falls back to putting 🔴 in front of the tab title.
   const TITLE_DOT = '🔴 ';
-  let dotIconUrl = null;       // data URL of the icon with a dot; false = couldn't make one
+  let dotIcons = null;         // { dot, plain } data URLs of the icon with/without dot; false = couldn't make them
   let dotIconLoading = false;
   let dotLink = null;
+  let blinkOn = true;          // true = dot visible right now
+  let blinkTimer = null;
 
   // Claude.ai updates its own tab icons from script and also overwrites any other icon
   // link on the page. So while the dot is shown, Claude.ai's icons are switched off
@@ -193,15 +196,21 @@
       img.crossOrigin = 'anonymous';
       img.onload = () => {
         try {
-          const c = document.createElement('canvas');
-          c.width = c.height = 32;
-          const g = c.getContext('2d');
-          g.drawImage(img, 0, 0, 32, 32);
-          g.beginPath();
-          g.arc(24, 24, 7.5, 0, 2 * Math.PI);
-          g.fillStyle = '#e5322d';
-          g.fill();
-          resolve(c.toDataURL('image/png'));
+          const draw = (withDot) => {
+            const c = document.createElement('canvas');
+            c.width = c.height = 32;
+            const g = c.getContext('2d');
+            g.drawImage(img, 0, 0, 32, 32);
+            if (withDot) {
+              g.beginPath();
+              g.arc(24, 24, 7.5, 0, 2 * Math.PI);
+              g.fillStyle = '#e5322d';
+              g.fill();
+            }
+            return c.toDataURL('image/png');
+          };
+          // The "plain" icon is Claude's icon redrawn as PNG, so blinking only toggles the dot.
+          resolve({ dot: draw(true), plain: draw(false) });
         } catch (e) { resolve(null); }
       };
       img.onerror = () => resolve(null);
@@ -218,6 +227,8 @@
     if (CONFIG.TAB_DOT === 'off') return;
 
     if (!on) {
+      if (blinkTimer) { clearInterval(blinkTimer); blinkTimer = null; }
+      blinkOn = true;
       if (dotLink && dotLink.isConnected) {
         dotLink.remove();
         restoreOriginalIcons();
@@ -228,18 +239,22 @@
       return;
     }
 
-    if (CONFIG.TAB_DOT === 'favicon' && dotIconUrl !== false) {
-      if (!dotIconUrl) {
+    if (CONFIG.TAB_DOT === 'favicon' && dotIcons !== false) {
+      if (!dotIcons) {
         if (!dotIconLoading) {
           dotIconLoading = true;
-          buildDotIcon().catch(() => null).then((url) => {
-            dotIconUrl = url || false;
-            if (!url) log('Could not draw on the tab icon – using 🔴 in the title instead');
+          buildDotIcon().catch(() => null).then((icons) => {
+            dotIcons = icons || false;
+            if (!icons) log('Could not draw on the tab icon – using 🔴 in the title instead');
             if (working) setTabDot(true);
           });
         }
         return;
       }
+      if (CONFIG.TAB_DOT_BLINK && !blinkTimer) {
+        blinkTimer = setInterval(() => { blinkOn = !blinkOn; setTabDot(true); }, 1000);
+      }
+      const dotIconUrl = (CONFIG.TAB_DOT_BLINK && !blinkOn) ? dotIcons.plain : dotIcons.dot;
       if (!dotLink) {
         dotLink = document.createElement('link');
         dotLink.id = 'claude-chime-dot';
@@ -325,5 +340,5 @@
   // Test from the console: claudeChimeTest()
   window.claudeChimeTest = () => { playChime(); return 'Played test chime'; };
 
-  console.log('[Claude-chime] v1.9.2 loaded – test with claudeChimeTest()');
+  console.log('[Claude-chime] v1.10.0 loaded – test with claudeChimeTest()');
 })();
