@@ -10,7 +10,7 @@ Claude can take a while on longer answers, and it's easy to switch to another ta
 
 While Claude is generating a response, Claude.ai shows a **stop button**. The script watches for that button:
 
-1. The stop button appears → Claude is working.
+1. The stop button appears → Claude is working → a red dot is shown on the tab, so you can see it's busy without looking at the tab.
 2. The stop button disappears and stays gone for 2 seconds (`DONE_DELAY_MS`) → Claude is done → the chime plays (and optionally a browser notification).
 
 The short wait prevents false chimes when the stop button blinks out for a moment in the middle of a response. If it comes back within the wait, it's treated as the same response.
@@ -37,6 +37,7 @@ Edit the `CONFIG` block at the top of the script:
 | Setting | Default | What it does |
 |---|---|---|
 | `SHOW_NOTIFICATION` | `true` | Also shows a browser notification when the tab isn't focused. Clicking it brings you to the tab. You're asked for permission on your first click on the page. |
+| `TAB_DOT` | `'favicon'` | Red dot on the tab while Claude works. `'favicon'` draws it on the tab icon (falls back to the title if the icon can't be drawn), `'title'` puts 🔴 in front of the tab title, `'off'` disables it. |
 | `ONLY_IN_BACKGROUND` | `false` | `true` = only chime when the tab isn't focused. |
 | `MIN_DURATION_MS` | `1500` | How long the stop button must have been visible before a chime is played. This does **not** delay the chime; it filters out quick replies. Use e.g. `10000` to only be notified about long waits. |
 | `DONE_DELAY_MS` | `2000` | How long the stop button must stay gone before the response counts as done. Prevents false chimes when the button blinks out mid-response. The chime comes this long after Claude finishes. |
@@ -62,6 +63,7 @@ claudeChimeTest()
 | Works with speakers, not with Bluetooth | The Bluetooth device is asleep when the chime starts. Set `KEEP_AWAKE: true`. |
 | No chime on quick replies | Expected: the reply was shorter than `MIN_DURATION_MS`. Turn on `DEBUG` to see `Too short – … ms`. |
 | Chime in the middle of a response | The stop button was gone longer than `DONE_DELAY_MS` (e.g. Claude was waiting for your approval). Increase `DONE_DELAY_MS` if it happens without a reason. |
+| 🔴 in the tab title instead of a dot on the icon | The icon couldn't be drawn, e.g. because an anti-fingerprinting tool blocks canvas. The title is used as a fallback. |
 | No chime when switching chats in the same tab | By design: switching away would otherwise look like "done". Keep long-running chats in their own tab. |
 
 ### Note on anti-fingerprinting tools

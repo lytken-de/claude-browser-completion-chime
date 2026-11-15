@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Claude Browser Completion Chime
 // @namespace    https://github.com/lytken-de/claude-browser-completion-chime
-// @version      1.8.1
-// @description  Plays an audio notification when Claude.ai finishes generating a response (when the stop button disappears).
+// @version      1.9.0
+// @description  Plays an audio notification when Claude.ai finishes generating a response, and shows a red dot on the tab while Claude is working.
 // @author       lytken-de
 // @license      MIT
 // @homepageURL  https://github.com/lytken-de/claude-browser-completion-chime
@@ -22,6 +22,7 @@
   const CONFIG = {
     SHOW_NOTIFICATION: true,    // browser notification (asks for permission on your first click on the page)
     ONLY_IN_BACKGROUND: false,  // true = only chime/notify when the tab is not focused
+    TAB_DOT: 'favicon',         // red dot on the tab while Claude works: 'favicon', 'title' (🔴 in the tab title) or 'off'
     MIN_DURATION_MS: 1500,      // the stop button must have been visible at least this long, otherwise no chime
     DONE_DELAY_MS: 2000,        // the stop button must stay gone this long before it counts as "done"
                                 // (if it comes back within this time, it's the same response – no chime)
@@ -146,10 +147,100 @@
     if (!CONFIG.SHOW_NOTIFICATION || !('Notification' in window) || Notification.permission !== 'granted') return;
     if (document.hasFocus()) return; // no need to notify while you're looking at the tab
     const n = new Notification('Claude is done', {
-      body: document.title.replace(/\s*[-–|]\s*Claude\s*$/i, '') || 'Your response is ready',
+      body: document.title.replace(TITLE_DOT, '').replace(/\s*[-–|]\s*Claude\s*$/i, '') || 'Your response is ready',
       silent: true,
     });
     n.onclick = () => { window.focus(); n.close(); };
+  }
+
+  // ---------- Red dot on the tab while Claude works ----------
+  // 'favicon': draws a red dot onto Claude's own tab icon. If that isn't possible
+  // (icon can't be loaded, or canvas is blocked by an anti-fingerprinting tool),
+  // it falls back to putting 🔴 in front of the tab title.
+  const TITLE_DOT = '🔴 ';
+  let dotIconUrl = null;       // data URL of the icon with a dot; false = couldn't make one
+  let dotIconLoading = false;
+  let dotLink = null;
+
+  function originalIconLinks() {
+    return [...document.querySelectorAll('link[rel~="icon"]')].filter((l) => l !== dotLink);
+  }
+
+  function buildDotIcon() {
+    return new Promise((resolve) => {
+      const icon = originalIconLinks()[0];
+      let img;
+      try { img = new Image(); } catch (e) { resolve(null); return; }
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        try {
+          const c = document.createElement('canvas');
+          c.width = c.height = 32;
+          const g = c.getContext('2d');
+          g.drawImage(img, 0, 0, 32, 32);
+          g.beginPath();
+          g.arc(24, 24, 7.5, 0, 2 * Math.PI);
+          g.fillStyle = '#e5322d';
+          g.fill();
+          g.lineWidth = 2;
+          g.strokeStyle = '#ffffff';
+          g.stroke();
+          resolve(c.toDataURL('image/png'));
+        } catch (e) { resolve(null); }
+      };
+      img.onerror = () => resolve(null);
+      img.src = icon ? icon.href : '/favicon.ico';
+    });
+  }
+
+  // Wrapper: a problem with the tab dot must never stop the chime.
+  function setTabDot(on) {
+    try { setTabDotInner(on); } catch (e) { console.warn('[Claude-chime] Tab dot failed:', e); }
+  }
+
+  function setTabDotInner(on) {
+    if (CONFIG.TAB_DOT === 'off') return;
+
+    if (!on) {
+      if (dotLink && dotLink.isConnected) {
+        dotLink.remove();
+        originalIconLinks().forEach((l) => { const h = l.href; l.href = h; }); // nudge the browser back to the normal icon
+        log('Tab dot off');
+      }
+      if (document.title.startsWith(TITLE_DOT)) document.title = document.title.slice(TITLE_DOT.length);
+      return;
+    }
+
+    if (CONFIG.TAB_DOT === 'favicon' && dotIconUrl !== false) {
+      if (!dotIconUrl) {
+        if (!dotIconLoading) {
+          dotIconLoading = true;
+          buildDotIcon().catch(() => null).then((url) => {
+            dotIconUrl = url || false;
+            if (!url) log('Could not draw on the tab icon – using 🔴 in the title instead');
+            if (working) setTabDot(true);
+          });
+        }
+        return;
+      }
+      if (!dotLink) {
+        dotLink = document.createElement('link');
+        dotLink.id = 'claude-chime-dot';
+        dotLink.rel = 'icon';
+        dotLink.type = 'image/png';
+        dotLink.href = dotIconUrl;
+      }
+      // Our icon must be the last one on the page to win; Claude.ai may add its own later.
+      const icons = document.querySelectorAll('link[rel~="icon"]');
+      if (icons[icons.length - 1] !== dotLink) {
+        document.head.appendChild(dotLink);
+        log('Tab dot on');
+      }
+      return;
+    }
+
+    // 'title', or fallback when the icon couldn't be drawn
+    if (!document.title.startsWith(TITLE_DOT)) document.title = TITLE_DOT + document.title;
   }
 
   // ---------- Watch for the stop button ----------
@@ -179,6 +270,7 @@
         log('Claude is working', startPath);
         startKeepAwake();
       }
+      setTabDot(true);
       return;
     }
 
@@ -193,6 +285,7 @@
     pendingFinish = null;
     if (stopButtons().length > 0) return; // came back at the last moment – keep waiting
     working = false;
+    setTabDot(false);
     const duration = goneAt - startTime;
     // If you switched to another chat yourself, that's not "done".
     if (location.pathname !== startPath) { log('Page changed – no chime'); stopKeepAwake(); return; }
@@ -213,5 +306,5 @@
   // Test from the console: claudeChimeTest()
   window.claudeChimeTest = () => { playChime(); return 'Played test chime'; };
 
-  console.log('[Claude-chime] v1.8.1 loaded – test with claudeChimeTest()');
+  console.log('[Claude-chime] v1.9.0 loaded – test with claudeChimeTest()');
 })();
