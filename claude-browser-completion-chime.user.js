@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Browser Completion Chime
 // @namespace    https://github.com/lytken-de/claude-browser-completion-chime
-// @version      1.11.0
+// @version      1.11.1
 // @description  Plays an audio notification when Claude.ai finishes generating a response, shows a red dot on the tab while Claude is working, and shows your usage limits above the chat input.
 // @author       lytken-de
 // @license      MIT
@@ -388,7 +388,8 @@
       ensureUsageBar();
       usageText.textContent = '5h ' + fivePct + '%' + reset + ' - W ' + weekPct + '%';
       const max = Math.max(fivePct, weekPct);
-      usageBar.style.color = max >= 90 ? '#e5322d' : max >= 75 ? '#d97706' : '';
+      usageBar.dataset.alert = max >= 90 ? '#e5322d' : max >= 75 ? '#d97706' : '';
+      positionUsageBar();
       usageBar.title = 'Claude usage – 5-hour limit: ' + fivePct + '%' +
         (five.resets_at ? ', resets ' + new Date(five.resets_at).toLocaleString() : '') +
         '\nWeekly limit: ' + weekPct + '%' +
@@ -399,7 +400,8 @@
       usageOrgId = null; // maybe the organization changed – look it up again next time
       ensureUsageBar();
       usageText.textContent = 'Usage unavailable';
-      usageBar.style.color = '';
+      usageBar.dataset.alert = '';
+      positionUsageBar();
       usageBar.title = String(e && e.message || e) + ' – click to retry';
       log('Usage failed:', e);
     } finally {
@@ -411,9 +413,11 @@
     if (usageBar) return;
     usageBar = document.createElement('div');
     usageBar.id = 'claude-chime-usage';
-    usageBar.style.cssText = 'display:flex;align-items:center;gap:5px;align-self:flex-start;' +
-      'margin:0 0 4px 6px;font-size:12px;line-height:16px;opacity:.7;cursor:pointer;' +
-      'user-select:none;font-variant-numeric:tabular-nums;white-space:nowrap;';
+    // Positioned on top of the page (not inside Claude.ai's own elements), so it works
+    // whatever the chat input is built from and isn't removed when the page re-renders.
+    usageBar.style.cssText = 'position:fixed;z-index:2147483000;display:none;align-items:center;gap:5px;' +
+      'font:12px/16px system-ui,sans-serif;opacity:.75;cursor:pointer;user-select:none;' +
+      'font-variant-numeric:tabular-nums;white-space:nowrap;';
     usageBar.innerHTML = USAGE_ICON;
     usageText = document.createElement('span');
     usageText.textContent = 'Usage …';
@@ -421,38 +425,78 @@
     usageBar.addEventListener('click', refreshUsage);
   }
 
+  // The chat input: the visible text field lowest on the page (claude.ai chat, Claude Code, projects …).
+  function findEditor() {
+    const sel = '[data-testid="chat-input"], div.ProseMirror[contenteditable="true"], ' +
+      '[contenteditable="true"][role="textbox"], textarea';
+    let best = null;
+    let bestBottom = -1;
+    document.querySelectorAll(sel).forEach((el) => {
+      if (el.closest('#claude-chime-usage')) return;
+      const r = el.getBoundingClientRect();
+      if (r.width < 150 || r.height === 0 || r.bottom > window.innerHeight + 1) return;
+      if (r.bottom > bestBottom) { best = el; bestBottom = r.bottom; }
+    });
+    return best;
+  }
+
   // The chat input box: the closest ancestor of the editor that also holds the input's buttons.
   function findComposerBox() {
-    const editor = document.querySelector('[data-testid="chat-input"], div.ProseMirror[contenteditable="true"]');
+    const editor = findEditor();
     if (!editor) return null;
     let el = editor.parentElement;
     while (el && el !== document.body && !el.querySelector('button')) el = el.parentElement;
-    return el && el !== document.body ? el : null;
+    return el && el !== document.body ? el : editor;
   }
 
-  // Claude.ai re-renders the page often, so the line is put back in place whenever it goes missing.
+  let usageBox = null;
+  const usageResize = typeof ResizeObserver === 'function' ? new ResizeObserver(() => positionUsageBar()) : null;
+
+  function positionUsageBar() {
+    if (!usageBar || !usageBox) return;
+    const r = usageBox.getBoundingClientRect();
+    if (!usageBox.isConnected || r.width === 0) { usageBar.style.display = 'none'; return; }
+    usageBar.style.display = 'flex';
+    usageBar.style.left = Math.round(r.left + 10) + 'px';
+    usageBar.style.top = Math.round(r.top - 20) + 'px';
+    usageBar.style.color = usageBar.dataset.alert || getComputedStyle(usageBox).color;
+  }
+
   function placeUsageBar() {
     if (!CONFIG.SHOW_USAGE) return;
     try {
       ensureUsageBar();
+      if (!usageBar.isConnected) document.body.appendChild(usageBar);
       const box = findComposerBox();
-      if (!box || !box.parentElement) { if (usageBar.isConnected) usageBar.remove(); return; }
-      if (usageBar.nextElementSibling !== box) box.parentElement.insertBefore(usageBar, box);
+      if (box !== usageBox) {
+        if (usageResize) { usageResize.disconnect(); if (box) usageResize.observe(box); }
+        usageBox = box;
+        log('Usage line attached to', box);
+      }
+      if (!box) { usageBar.style.display = 'none'; return; }
+      positionUsageBar();
     } catch (e) { log('Usage line placement failed:', e); }
   }
 
   if (CONFIG.SHOW_USAGE) {
     placeUsageBar();
     refreshUsage();
-    setInterval(placeUsageBar, 1000);
+    setInterval(placeUsageBar, 500);
+    window.addEventListener('resize', positionUsageBar);
     setInterval(() => { if (!document.hidden) refreshUsage(); }, CONFIG.USAGE_REFRESH_MS);
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden && Date.now() - usageFetchedAt > 60000) refreshUsage(); // back on the tab
     });
   }
 
+  // Check the usage line from the console: claudeChimeUsage()
+  window.claudeChimeUsage = () => {
+    refreshUsage();
+    return { enabled: CONFIG.SHOW_USAGE, inputFound: !!usageBox, input: usageBox, text: usageText && usageText.textContent, error: usageBar && usageBar.title };
+  };
+
   // Test from the console: claudeChimeTest()
   window.claudeChimeTest = () => { playChime(); return 'Played test chime'; };
 
-  console.log('[Claude-chime] v1.11.0 loaded – test with claudeChimeTest()');
+  console.log('[Claude-chime] v1.11.1 loaded – test with claudeChimeTest()');
 })();
