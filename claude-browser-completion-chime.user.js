@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Browser Completion Chime
 // @namespace    https://github.com/lytken-de/claude-browser-completion-chime
-// @version      1.12.0
+// @version      1.12.1
 // @description  Plays an audio notification when Claude.ai finishes generating a response, shows a red dot on the tab while Claude is working, and shows your usage limits above the chat input.
 // @author       lytken-de
 // @license      MIT
@@ -358,10 +358,8 @@
     #claude-chime-usage .cc-val{font-weight:600;opacity:.9}
     #claude-chime-usage .cc-sub{opacity:.5}
     #claude-chime-usage .cc-sep{width:1px;height:14px;background:currentColor;opacity:.2}
-    #claude-chime-usage .cc-bar{display:block;width:44px;height:4px;border-radius:2px;background:color-mix(in srgb,currentColor 18%,transparent);overflow:hidden}
-    #claude-chime-usage .cc-fill{display:block;height:100%;border-radius:2px;background:currentColor;opacity:.7;transition:width .4s}
-    #claude-chime-usage .cc-fill.warn{background:#d97706;opacity:1}
-    #claude-chime-usage .cc-fill.alert{background:#e5322d;opacity:1}
+    #claude-chime-usage .cc-val.warn{color:#d97706;opacity:1}
+    #claude-chime-usage .cc-val.alert{color:#e5322d;opacity:1}
     #claude-chime-usage .cc-cache{padding:1px 8px;border-radius:999px;font-weight:600;font-size:11px}
     #claude-chime-usage .cc-cache.warm{color:#e8913a;background:rgba(232,145,58,.14)}
     #claude-chime-usage .cc-cache.cold{color:#5aa9e6;background:rgba(90,169,230,.14)}
@@ -456,8 +454,7 @@
   function meter(label, p, sub) {
     const cls = p >= 90 ? ' alert' : p >= 75 ? ' warn' : '';
     return `<span class="cc-seg"><span class="cc-label">${label}</span>` +
-      `<span class="cc-bar"><span class="cc-fill${cls}" style="width:${Math.min(p, 100)}%"></span></span>` +
-      `<span class="cc-val">${p}%</span>${sub ? `<span class="cc-sub">${sub}</span>` : ''}</span>`;
+      `<span class="cc-val${cls}">${p}%</span>${sub ? `<span class="cc-sub">${sub}</span>` : ''}</span>`;
   }
 
   function renderUsage() {
@@ -592,5 +589,5 @@
   // Test from the console: claudeChimeTest()
   window.claudeChimeTest = () => { playChime(); return 'Played test chime'; };
 
-  console.log('[Claude-chime] v1.12.0 loaded – test with claudeChimeTest()');
+  console.log('[Claude-chime] v1.12.1 loaded – test with claudeChimeTest()');
 })();
