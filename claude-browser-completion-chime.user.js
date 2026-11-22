@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Browser Completion Chime
 // @namespace    https://github.com/lytken-de/claude-browser-completion-chime
-// @version      1.11.1
+// @version      1.12.0
 // @description  Plays an audio notification when Claude.ai finishes generating a response, shows a red dot on the tab while Claude is working, and shows your usage limits above the chat input.
 // @author       lytken-de
 // @license      MIT
@@ -32,6 +32,8 @@
     SILENCE_BEFORE_MS: 0,       // extra silence before the chime
     SHOW_USAGE: true,           // line above the chat input: "5h 8% Reset: 23:40 - W 14%"
     USAGE_REFRESH_MS: 120000,   // how often the usage is fetched (also right after each response)
+    CACHE_TTL_MIN: 'auto',      // prompt cache lifetime for the Warm/Cold estimate, in minutes.
+                                // 'auto' = 60 in Claude Code (claude.ai/code), 5 elsewhere
     DEBUG: false,               // true = log state changes to the console
   };
 
@@ -303,6 +305,7 @@
         log('Claude is working', startPath);
         startKeepAwake();
       }
+      markCacheActivity();
       setTabDot(true);
       return;
     }
@@ -326,6 +329,7 @@
     if (CONFIG.ONLY_IN_BACKGROUND && document.hasFocus()) { log('Tab is focused – no chime'); stopKeepAwake(); return; }
 
     log('Done after', duration, 'ms');
+    markCacheActivity();
     refreshUsage();
     playChime();
     showNotification();
@@ -343,17 +347,73 @@
   // ---------- Usage line above the chat input ----------
   // Uses the same endpoints as Claude.ai's own usage page (Settings → Usage):
   //   /api/organizations/{org}/usage → { five_hour: { utilization, resets_at }, seven_day: { … } }
-  const USAGE_ICON = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2.5 11.5a5.5 5.5 0 1 1 11 0"/><path d="M8 11.5l3-4"/></svg>';
+  const USAGE_ICON = '<svg width="24" height="24" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M2.5 11.5a5.5 5.5 0 1 1 11 0"/><path d="M8 11.5l3-4"/><circle cx="8" cy="11.5" r=".9" fill="currentColor" stroke="none"/></svg>';
+  const USAGE_CSS = `
+    #claude-chime-usage{position:fixed;z-index:2147483000;display:none;align-items:center;gap:10px;
+      font:12px/16px system-ui,-apple-system,"Segoe UI",sans-serif;cursor:pointer;user-select:none;
+      font-variant-numeric:tabular-nums;white-space:nowrap}
+    #claude-chime-usage .cc-icon{display:flex;opacity:.55}
+    #claude-chime-usage .cc-seg{display:flex;align-items:center;gap:6px}
+    #claude-chime-usage .cc-label{opacity:.55}
+    #claude-chime-usage .cc-val{font-weight:600;opacity:.9}
+    #claude-chime-usage .cc-sub{opacity:.5}
+    #claude-chime-usage .cc-sep{width:1px;height:14px;background:currentColor;opacity:.2}
+    #claude-chime-usage .cc-bar{display:block;width:44px;height:4px;border-radius:2px;background:color-mix(in srgb,currentColor 18%,transparent);overflow:hidden}
+    #claude-chime-usage .cc-fill{display:block;height:100%;border-radius:2px;background:currentColor;opacity:.7;transition:width .4s}
+    #claude-chime-usage .cc-fill.warn{background:#d97706;opacity:1}
+    #claude-chime-usage .cc-fill.alert{background:#e5322d;opacity:1}
+    #claude-chime-usage .cc-cache{padding:1px 8px;border-radius:999px;font-weight:600;font-size:11px}
+    #claude-chime-usage .cc-cache.warm{color:#e8913a;background:rgba(232,145,58,.14)}
+    #claude-chime-usage .cc-cache.cold{color:#5aa9e6;background:rgba(90,169,230,.14)}
+    #claude-chime-usage .cc-err{opacity:.6}`;
   let usageBar = null;
-  let usageText = null;
   let usageOrgId = null;
   let usageLoading = false;
   let usageFetchedAt = 0;
+  let usageData = null;   // last successful /usage response
+  let usageError = null;  // last error message, if the last fetch failed
+  let usageHtml = '';
 
   const pad2 = (n) => String(n).padStart(2, '0');
   const hhmm = (d) => pad2(d.getHours()) + ':' + pad2(d.getMinutes());
-  const pct = (v) => Math.round(Number(v) || 0);
+  const pct = (v) => Math.max(0, Math.round(Number(v) || 0));
+  const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+  // ----- Prompt cache estimate (Warm/Cold) -----
+  // There's no API for the cache state, so it is estimated: the cache is warm while less than
+  // the cache lifetime (TTL) has passed since Claude last worked in this chat.
+  const CACHE_KEY = 'claude-chime-cache';
+  function cacheTtlMs() {
+    const min = CONFIG.CACHE_TTL_MIN === 'auto' ? (location.pathname.startsWith('/code') ? 60 : 5) : Number(CONFIG.CACHE_TTL_MIN);
+    return min * 60000;
+  }
+  function readCacheTimes() {
+    try { return JSON.parse(localStorage.getItem(CACHE_KEY)) || {}; } catch (e) { return {}; }
+  }
+  let lastCacheWrite = 0;
+  function markCacheActivity() {
+    const now = Date.now();
+    if (now - lastCacheWrite < 5000) return; // called every check while working: write at most every 5 s
+    lastCacheWrite = now;
+    try {
+      const times = readCacheTimes();
+      times[location.pathname] = now;
+      for (const k of Object.keys(times)) if (now - times[k] > 86400000) delete times[k]; // forget after a day
+      localStorage.setItem(CACHE_KEY, JSON.stringify(times));
+    } catch (e) {}
+  }
+  function cacheState() {
+    if (working) return { warm: true, text: 'Warm', tip: 'Claude is working – the prompt cache is in use' };
+    const last = readCacheTimes()[location.pathname];
+    if (!last) return null; // no activity seen in this chat – unknown
+    const left = cacheTtlMs() - (Date.now() - last);
+    const ttlMin = Math.round(cacheTtlMs() / 60000);
+    if (left <= 0) return { warm: false, text: 'Cold', tip: `Last activity ${hhmm(new Date(last))} – more than ${ttlMin} min ago, so the prompt cache has probably expired. The next message is processed from scratch.` };
+    const m = Math.floor(left / 60000);
+    return { warm: true, text: 'Warm ' + (m >= 1 ? m + 'm' : '<1m'), tip: `Last activity ${hhmm(new Date(last))} – the prompt cache (≈${ttlMin} min) is probably still warm for about ${m >= 1 ? m + ' more min' : 'less than a minute'}.` };
+  }
+
+  // ----- Fetching -----
   async function getJson(url) {
     const r = await fetch(url, { credentials: 'include', headers: { accept: 'application/json' } });
     if (!r.ok) throw new Error(url + ' → HTTP ' + r.status);
@@ -379,50 +439,70 @@
     try {
       const orgId = await findOrgId();
       if (!orgId) throw new Error('no organization found');
-      const usage = await getJson('/api/organizations/' + encodeURIComponent(orgId) + '/usage');
-      const five = usage.five_hour || {};
-      const week = usage.seven_day || {};
-      const fivePct = pct(five.utilization);
-      const weekPct = pct(week.utilization);
-      const reset = five.resets_at ? ' Reset: ' + hhmm(new Date(five.resets_at)) : '';
-      ensureUsageBar();
-      usageText.textContent = '5h ' + fivePct + '%' + reset + ' - W ' + weekPct + '%';
-      const max = Math.max(fivePct, weekPct);
-      usageBar.dataset.alert = max >= 90 ? '#e5322d' : max >= 75 ? '#d97706' : '';
-      positionUsageBar();
-      usageBar.title = 'Claude usage – 5-hour limit: ' + fivePct + '%' +
-        (five.resets_at ? ', resets ' + new Date(five.resets_at).toLocaleString() : '') +
-        '\nWeekly limit: ' + weekPct + '%' +
-        (week.resets_at ? ', resets ' + new Date(week.resets_at).toLocaleString() : '') +
-        '\nUpdated ' + hhmm(new Date()) + ' – click to refresh';
-      log('Usage', usage);
+      usageData = await getJson('/api/organizations/' + encodeURIComponent(orgId) + '/usage');
+      usageError = null;
+      log('Usage', usageData);
     } catch (e) {
       usageOrgId = null; // maybe the organization changed – look it up again next time
-      ensureUsageBar();
-      usageText.textContent = 'Usage unavailable';
-      usageBar.dataset.alert = '';
-      positionUsageBar();
-      usageBar.title = String(e && e.message || e) + ' – click to retry';
+      usageError = String(e && e.message || e);
       log('Usage failed:', e);
     } finally {
       usageLoading = false;
+      renderUsage();
     }
+  }
+
+  // ----- Drawing -----
+  function meter(label, p, sub) {
+    const cls = p >= 90 ? ' alert' : p >= 75 ? ' warn' : '';
+    return `<span class="cc-seg"><span class="cc-label">${label}</span>` +
+      `<span class="cc-bar"><span class="cc-fill${cls}" style="width:${Math.min(p, 100)}%"></span></span>` +
+      `<span class="cc-val">${p}%</span>${sub ? `<span class="cc-sub">${sub}</span>` : ''}</span>`;
+  }
+
+  function renderUsage() {
+    if (!usageBar) return;
+    const parts = [];
+    const tips = [];
+    if (usageData) {
+      const five = usageData.five_hour || {};
+      const week = usageData.seven_day || {};
+      const fivePct = pct(five.utilization);
+      const weekPct = pct(week.utilization);
+      parts.push(meter('5h', fivePct, five.resets_at ? 'Reset: ' + hhmm(new Date(five.resets_at)) : ''));
+      parts.push(meter('W', weekPct, ''));
+      tips.push('5-hour limit: ' + fivePct + '%' + (five.resets_at ? ', resets ' + new Date(five.resets_at).toLocaleString() : ''));
+      tips.push('Weekly limit: ' + weekPct + '%' + (week.resets_at ? ', resets ' + new Date(week.resets_at).toLocaleString() : ''));
+      tips.push('Updated ' + hhmm(new Date(usageFetchedAt)) + (usageError ? ' (last refresh failed: ' + usageError + ')' : '') + ' – click to refresh');
+    } else if (usageError) {
+      parts.push('<span class="cc-err">Usage unavailable</span>');
+      tips.push(usageError + ' – click to retry');
+    } else {
+      parts.push('<span class="cc-err">Usage …</span>');
+    }
+    const cache = cacheState();
+    if (cache) {
+      parts.push(`<span class="cc-cache ${cache.warm ? 'warm' : 'cold'}">${cache.text}</span>`);
+      tips.push('', 'Prompt cache (estimate): ' + cache.tip);
+    }
+    const html = `<span class="cc-icon">${USAGE_ICON}</span>` + parts.join('<span class="cc-sep"></span>');
+    if (html !== usageHtml) { usageBar.innerHTML = html; usageHtml = html; }
+    const tip = tips.join('\n');
+    if (usageBar.title !== tip) usageBar.title = tip;
   }
 
   function ensureUsageBar() {
     if (usageBar) return;
-    usageBar = document.createElement('div');
-    usageBar.id = 'claude-chime-usage';
+    const style = document.createElement('style');
+    style.id = 'claude-chime-usage-style';
+    style.textContent = USAGE_CSS;
+    document.head.appendChild(style);
     // Positioned on top of the page (not inside Claude.ai's own elements), so it works
     // whatever the chat input is built from and isn't removed when the page re-renders.
-    usageBar.style.cssText = 'position:fixed;z-index:2147483000;display:none;align-items:center;gap:5px;' +
-      'font:12px/16px system-ui,sans-serif;opacity:.75;cursor:pointer;user-select:none;' +
-      'font-variant-numeric:tabular-nums;white-space:nowrap;';
-    usageBar.innerHTML = USAGE_ICON;
-    usageText = document.createElement('span');
-    usageText.textContent = 'Usage …';
-    usageBar.appendChild(usageText);
+    usageBar = document.createElement('div');
+    usageBar.id = 'claude-chime-usage';
     usageBar.addEventListener('click', refreshUsage);
+    renderUsage();
   }
 
   // The chat input: the visible text field lowest on the page (claude.ai chat, Claude Code, projects …).
@@ -440,10 +520,23 @@
     return best;
   }
 
-  // The chat input box: the closest ancestor of the editor that also holds the input's buttons.
+  // The chat input box: the outermost framed (border or background) ancestor of the editor
+  // that still holds the input's buttons – i.e. the rounded box you see around the input.
   function findComposerBox() {
     const editor = findEditor();
     if (!editor) return null;
+    const er = editor.getBoundingClientRect();
+    let box = null;
+    for (let el = editor.parentElement; el && el !== document.body; el = el.parentElement) {
+      const r = el.getBoundingClientRect();
+      if (r.height > er.height + 200) break; // grown far beyond the input – we've left the box
+      if (!el.querySelector('button')) continue;
+      const cs = getComputedStyle(el);
+      const framed = parseFloat(cs.borderTopWidth) > 0 || parseFloat(cs.borderRadius) >= 8 ||
+        (cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent');
+      if (framed) box = el;
+    }
+    if (box) return box;
     let el = editor.parentElement;
     while (el && el !== document.body && !el.querySelector('button')) el = el.parentElement;
     return el && el !== document.body ? el : editor;
@@ -457,9 +550,9 @@
     const r = usageBox.getBoundingClientRect();
     if (!usageBox.isConnected || r.width === 0) { usageBar.style.display = 'none'; return; }
     usageBar.style.display = 'flex';
-    usageBar.style.left = Math.round(r.left + 10) + 'px';
-    usageBar.style.top = Math.round(r.top - 20) + 'px';
-    usageBar.style.color = usageBar.dataset.alert || getComputedStyle(usageBox).color;
+    usageBar.style.left = Math.round(r.left + 12) + 'px';
+    usageBar.style.top = Math.round(r.top - usageBar.offsetHeight - 6) + 'px';
+    usageBar.style.color = getComputedStyle(usageBox).color;
   }
 
   function placeUsageBar() {
@@ -474,6 +567,7 @@
         log('Usage line attached to', box);
       }
       if (!box) { usageBar.style.display = 'none'; return; }
+      renderUsage(); // keeps the Warm/Cold countdown current
       positionUsageBar();
     } catch (e) { log('Usage line placement failed:', e); }
   }
@@ -492,11 +586,11 @@
   // Check the usage line from the console: claudeChimeUsage()
   window.claudeChimeUsage = () => {
     refreshUsage();
-    return { enabled: CONFIG.SHOW_USAGE, inputFound: !!usageBox, input: usageBox, text: usageText && usageText.textContent, error: usageBar && usageBar.title };
+    return { enabled: CONFIG.SHOW_USAGE, inputFound: !!usageBox, input: usageBox, usage: usageData, error: usageError, cache: cacheState() };
   };
 
   // Test from the console: claudeChimeTest()
   window.claudeChimeTest = () => { playChime(); return 'Played test chime'; };
 
-  console.log('[Claude-chime] v1.11.1 loaded – test with claudeChimeTest()');
+  console.log('[Claude-chime] v1.12.0 loaded – test with claudeChimeTest()');
 })();
