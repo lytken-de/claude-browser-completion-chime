@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Claude Browser Completion Chime
 // @namespace    https://github.com/lytken-de/claude-browser-completion-chime
-// @version      1.10.0
-// @description  Plays an audio notification when Claude.ai finishes generating a response, and shows a red dot on the tab while Claude is working.
+// @version      1.11.0
+// @description  Plays an audio notification when Claude.ai finishes generating a response, shows a red dot on the tab while Claude is working, and shows your usage limits above the chat input.
 // @author       lytken-de
 // @license      MIT
 // @homepageURL  https://github.com/lytken-de/claude-browser-completion-chime
@@ -30,6 +30,8 @@
     VOLUME: 1.0,                // 1.0 = the sound file's own volume, 0.5 = half
     KEEP_AWAKE: false,          // very faint noise while Claude works, so Bluetooth audio doesn't fall asleep
     SILENCE_BEFORE_MS: 0,       // extra silence before the chime
+    SHOW_USAGE: true,           // line above the chat input: "5h 8% Reset: 23:40 - W 14%"
+    USAGE_REFRESH_MS: 120000,   // how often the usage is fetched (also right after each response)
     DEBUG: false,               // true = log state changes to the console
   };
 
@@ -324,6 +326,7 @@
     if (CONFIG.ONLY_IN_BACKGROUND && document.hasFocus()) { log('Tab is focused – no chime'); stopKeepAwake(); return; }
 
     log('Done after', duration, 'ms');
+    refreshUsage();
     playChime();
     showNotification();
   }
@@ -337,8 +340,119 @@
     childList: true, subtree: true, attributes: true, attributeFilter: ['href', 'rel'],
   });
 
+  // ---------- Usage line above the chat input ----------
+  // Uses the same endpoints as Claude.ai's own usage page (Settings → Usage):
+  //   /api/organizations/{org}/usage → { five_hour: { utilization, resets_at }, seven_day: { … } }
+  const USAGE_ICON = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2.5 11.5a5.5 5.5 0 1 1 11 0"/><path d="M8 11.5l3-4"/></svg>';
+  let usageBar = null;
+  let usageText = null;
+  let usageOrgId = null;
+  let usageLoading = false;
+  let usageFetchedAt = 0;
+
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const hhmm = (d) => pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+  const pct = (v) => Math.round(Number(v) || 0);
+
+  async function getJson(url) {
+    const r = await fetch(url, { credentials: 'include', headers: { accept: 'application/json' } });
+    if (!r.ok) throw new Error(url + ' → HTTP ' + r.status);
+    return r.json();
+  }
+
+  async function findOrgId() {
+    if (usageOrgId) return usageOrgId;
+    // Claude.ai remembers the active organization in a cookie; use it if present.
+    const m = document.cookie.match(/(?:^|;\s*)lastActiveOrg=([^;]+)/);
+    if (m) return (usageOrgId = decodeURIComponent(m[1]));
+    const orgs = await getJson('/api/organizations');
+    const list = Array.isArray(orgs) ? orgs : [];
+    const chatOrg = list.find((o) => (o.capabilities || []).includes('chat')) || list[0];
+    usageOrgId = chatOrg && (chatOrg.uuid || chatOrg.id);
+    return usageOrgId;
+  }
+
+  async function refreshUsage() {
+    if (!CONFIG.SHOW_USAGE || usageLoading) return;
+    usageLoading = true;
+    usageFetchedAt = Date.now();
+    try {
+      const orgId = await findOrgId();
+      if (!orgId) throw new Error('no organization found');
+      const usage = await getJson('/api/organizations/' + encodeURIComponent(orgId) + '/usage');
+      const five = usage.five_hour || {};
+      const week = usage.seven_day || {};
+      const fivePct = pct(five.utilization);
+      const weekPct = pct(week.utilization);
+      const reset = five.resets_at ? ' Reset: ' + hhmm(new Date(five.resets_at)) : '';
+      ensureUsageBar();
+      usageText.textContent = '5h ' + fivePct + '%' + reset + ' - W ' + weekPct + '%';
+      const max = Math.max(fivePct, weekPct);
+      usageBar.style.color = max >= 90 ? '#e5322d' : max >= 75 ? '#d97706' : '';
+      usageBar.title = 'Claude usage – 5-hour limit: ' + fivePct + '%' +
+        (five.resets_at ? ', resets ' + new Date(five.resets_at).toLocaleString() : '') +
+        '\nWeekly limit: ' + weekPct + '%' +
+        (week.resets_at ? ', resets ' + new Date(week.resets_at).toLocaleString() : '') +
+        '\nUpdated ' + hhmm(new Date()) + ' – click to refresh';
+      log('Usage', usage);
+    } catch (e) {
+      usageOrgId = null; // maybe the organization changed – look it up again next time
+      ensureUsageBar();
+      usageText.textContent = 'Usage unavailable';
+      usageBar.style.color = '';
+      usageBar.title = String(e && e.message || e) + ' – click to retry';
+      log('Usage failed:', e);
+    } finally {
+      usageLoading = false;
+    }
+  }
+
+  function ensureUsageBar() {
+    if (usageBar) return;
+    usageBar = document.createElement('div');
+    usageBar.id = 'claude-chime-usage';
+    usageBar.style.cssText = 'display:flex;align-items:center;gap:5px;align-self:flex-start;' +
+      'margin:0 0 4px 6px;font-size:12px;line-height:16px;opacity:.7;cursor:pointer;' +
+      'user-select:none;font-variant-numeric:tabular-nums;white-space:nowrap;';
+    usageBar.innerHTML = USAGE_ICON;
+    usageText = document.createElement('span');
+    usageText.textContent = 'Usage …';
+    usageBar.appendChild(usageText);
+    usageBar.addEventListener('click', refreshUsage);
+  }
+
+  // The chat input box: the closest ancestor of the editor that also holds the input's buttons.
+  function findComposerBox() {
+    const editor = document.querySelector('[data-testid="chat-input"], div.ProseMirror[contenteditable="true"]');
+    if (!editor) return null;
+    let el = editor.parentElement;
+    while (el && el !== document.body && !el.querySelector('button')) el = el.parentElement;
+    return el && el !== document.body ? el : null;
+  }
+
+  // Claude.ai re-renders the page often, so the line is put back in place whenever it goes missing.
+  function placeUsageBar() {
+    if (!CONFIG.SHOW_USAGE) return;
+    try {
+      ensureUsageBar();
+      const box = findComposerBox();
+      if (!box || !box.parentElement) { if (usageBar.isConnected) usageBar.remove(); return; }
+      if (usageBar.nextElementSibling !== box) box.parentElement.insertBefore(usageBar, box);
+    } catch (e) { log('Usage line placement failed:', e); }
+  }
+
+  if (CONFIG.SHOW_USAGE) {
+    placeUsageBar();
+    refreshUsage();
+    setInterval(placeUsageBar, 1000);
+    setInterval(() => { if (!document.hidden) refreshUsage(); }, CONFIG.USAGE_REFRESH_MS);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && Date.now() - usageFetchedAt > 60000) refreshUsage(); // back on the tab
+    });
+  }
+
   // Test from the console: claudeChimeTest()
   window.claudeChimeTest = () => { playChime(); return 'Played test chime'; };
 
-  console.log('[Claude-chime] v1.10.0 loaded – test with claudeChimeTest()');
+  console.log('[Claude-chime] v1.11.0 loaded – test with claudeChimeTest()');
 })();

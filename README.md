@@ -45,6 +45,8 @@ Edit the `CONFIG` block at the top of the script:
 | `VOLUME` | `1.0` | `1.0` = the sound file's own volume, `0.5` = half. |
 | `KEEP_AWAKE` | `false` | Plays a very faint noise while Claude works, so Bluetooth headphones/speakers don't fall asleep and swallow the chime. Only needed if the chime goes missing on Bluetooth. |
 | `SILENCE_BEFORE_MS` | `0` | Extra silence before the chime. |
+| `SHOW_USAGE` | `true` | Shows a line above the chat input with your usage limits, e.g. `5h 8% Reset: 23:40 - W 14%` (5-hour limit, when it resets, weekly limit). Turns orange at 75 % and red at 90 %. Hover for details, click to refresh. |
+| `USAGE_REFRESH_MS` | `120000` | How often the usage is fetched. It's also fetched right after each response and when you come back to the tab. |
 | `DEBUG` | `false` | `true` = logs `[Claude-chime]` state changes to the browser console. |
 
 ## Testing
@@ -65,6 +67,7 @@ claudeChimeTest()
 | No chime on quick replies | Expected: the reply was shorter than `MIN_DURATION_MS`. Turn on `DEBUG` to see `Too short – … ms`. |
 | Chime in the middle of a response | The stop button was gone longer than `DONE_DELAY_MS` (e.g. Claude was waiting for your approval). Increase `DONE_DELAY_MS` if it happens without a reason. |
 | 🔴 in the tab title instead of a dot on the icon | The icon couldn't be drawn, e.g. because an anti-fingerprinting tool blocks canvas. The title is used as a fallback. |
+| `Usage unavailable` above the chat input | The usage endpoint failed or changed. Hover the line to see the error; set `SHOW_USAGE: false` to hide it. |
 | No chime when switching chats in the same tab | By design: switching away would otherwise look like "done". Keep long-running chats in their own tab. |
 
 ### Note on anti-fingerprinting tools
@@ -73,6 +76,7 @@ Some privacy/anti-fingerprinting tools (e.g. AdGuard) block or neutralize parts 
 
 ## Limitations
 
+- The usage line uses the same internal endpoint as Claude.ai's usage page (`/api/organizations/{org}/usage`). It's undocumented and may change; the line then shows `Usage unavailable`.
 - Relies on Claude.ai's stop button (`data-testid="chat-input-stop"`). If Claude.ai changes its page structure, the script may need an update.
 - Unofficial; not affiliated with Anthropic.
 
