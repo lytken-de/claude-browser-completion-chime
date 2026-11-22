@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Browser Completion Chime
 // @namespace    https://github.com/lytken-de/claude-browser-completion-chime
-// @version      1.12.2
+// @version      1.12.3
 // @description  Plays an audio notification when Claude.ai finishes generating a response, shows a red dot on the tab while Claude is working, and shows your usage limits above the chat input.
 // @author       lytken-de
 // @license      MIT
@@ -517,23 +517,23 @@
     return best;
   }
 
-  // The chat input box: the outermost framed (border or background) ancestor of the editor
-  // that still holds the input's buttons – i.e. the rounded box you see around the input.
+  // The chat input box: the rounded, bordered box you see around the input. That's the
+  // innermost ancestor of the editor with a visible border that also holds the input's buttons.
+  // (Outer wrappers with only a background are skipped – they can start above the visible box.)
   function findComposerBox() {
     const editor = findEditor();
     if (!editor) return null;
     const er = editor.getBoundingClientRect();
-    let box = null;
+    let framed = null;
     for (let el = editor.parentElement; el && el !== document.body; el = el.parentElement) {
       const r = el.getBoundingClientRect();
       if (r.height > er.height + 200) break; // grown far beyond the input – we've left the box
       if (!el.querySelector('button')) continue;
       const cs = getComputedStyle(el);
-      const framed = parseFloat(cs.borderTopWidth) > 0 || parseFloat(cs.borderRadius) >= 8 ||
-        (cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent');
-      if (framed) box = el;
+      if (parseFloat(cs.borderTopWidth) > 0 && cs.borderTopStyle !== 'none') return el;
+      if (!framed && parseFloat(cs.borderRadius) >= 8) framed = el;
     }
-    if (box) return box;
+    if (framed) return framed;
     let el = editor.parentElement;
     while (el && el !== document.body && !el.querySelector('button')) el = el.parentElement;
     return el && el !== document.body ? el : editor;
@@ -605,11 +605,11 @@
   // Check the usage line from the console: claudeChimeUsage()
   window.claudeChimeUsage = () => {
     refreshUsage();
-    return { enabled: CONFIG.SHOW_USAGE, inputFound: !!usageBox, input: usageBox, usage: usageData, error: usageError, cache: cacheState() };
+    return { version: '1.12.3', enabled: CONFIG.SHOW_USAGE, inputFound: !!usageBox, input: usageBox, usage: usageData, error: usageError, cache: cacheState() };
   };
 
   // Test from the console: claudeChimeTest()
   window.claudeChimeTest = () => { playChime(); return 'Played test chime'; };
 
-  console.log('[Claude-chime] v1.12.2 loaded – test with claudeChimeTest()');
+  console.log('[Claude-chime] v1.12.3 loaded – test with claudeChimeTest()');
 })();
