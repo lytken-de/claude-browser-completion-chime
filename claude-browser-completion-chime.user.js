@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Browser Completion Chime
 // @namespace    https://github.com/lytken-de/claude-browser-completion-chime
-// @version      1.12.1
+// @version      1.12.2
 // @description  Plays an audio notification when Claude.ai finishes generating a response, shows a red dot on the tab while Claude is working, and shows your usage limits above the chat input.
 // @author       lytken-de
 // @license      MIT
@@ -541,15 +541,36 @@
 
   let usageBox = null;
   const usageResize = typeof ResizeObserver === 'function' ? new ResizeObserver(() => positionUsageBar()) : null;
+  const USAGE_TOP = 8; // px from the top edge of the input box to the line
+
+  // The line sits inside the input box, at the top. The box gets extra top padding so the
+  // line doesn't cover the text; the original padding is remembered and restored.
+  function reserveSpace(box, on) {
+    if (!box) return;
+    if (!on) {
+      if ('chimePad' in box.dataset) { box.style.paddingTop = box.dataset.chimePad; delete box.dataset.chimePad; }
+      return;
+    }
+    if (!('chimePad' in box.dataset)) box.dataset.chimePad = box.style.paddingTop;
+    box.style.paddingTop = '';
+    const orig = parseFloat(getComputedStyle(box).paddingTop) || 0;
+    const want = USAGE_TOP + usageBar.offsetHeight + Math.max(4, orig - USAGE_TOP);
+    box.style.paddingTop = Math.max(orig, want) + 'px';
+  }
 
   function positionUsageBar() {
     if (!usageBar || !usageBox) return;
     const r = usageBox.getBoundingClientRect();
     if (!usageBox.isConnected || r.width === 0) { usageBar.style.display = 'none'; return; }
     usageBar.style.display = 'flex';
-    usageBar.style.left = Math.round(r.left + 12) + 'px';
-    usageBar.style.top = Math.round(r.top - usageBar.offsetHeight - 6) + 'px';
-    usageBar.style.color = getComputedStyle(usageBox).color;
+    const cs = getComputedStyle(usageBox);
+    if (!usageBox.style.paddingTop || usageBox.dataset.chimeH !== String(usageBar.offsetHeight)) {
+      usageBox.dataset.chimeH = usageBar.offsetHeight;
+      reserveSpace(usageBox, true);
+    }
+    usageBar.style.left = Math.round(r.left + (parseFloat(cs.borderLeftWidth) || 0) + 12) + 'px';
+    usageBar.style.top = Math.round(r.top + (parseFloat(cs.borderTopWidth) || 0) + USAGE_TOP) + 'px';
+    usageBar.style.color = cs.color;
   }
 
   function placeUsageBar() {
@@ -560,6 +581,7 @@
       const box = findComposerBox();
       if (box !== usageBox) {
         if (usageResize) { usageResize.disconnect(); if (box) usageResize.observe(box); }
+        reserveSpace(usageBox, false);
         usageBox = box;
         log('Usage line attached to', box);
       }
@@ -589,5 +611,5 @@
   // Test from the console: claudeChimeTest()
   window.claudeChimeTest = () => { playChime(); return 'Played test chime'; };
 
-  console.log('[Claude-chime] v1.12.1 loaded – test with claudeChimeTest()');
+  console.log('[Claude-chime] v1.12.2 loaded – test with claudeChimeTest()');
 })();
