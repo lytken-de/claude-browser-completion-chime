@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Browser Completion Chime
 // @namespace    https://github.com/lytken-de/claude-browser-completion-chime
-// @version      1.12.3
+// @version      1.12.4
 // @description  Plays an audio notification when Claude.ai finishes generating a response, shows a red dot on the tab while Claude is working, and shows your usage limits above the chat input.
 // @author       lytken-de
 // @license      MIT
@@ -517,23 +517,10 @@
     return best;
   }
 
-  // The chat input box: the rounded, bordered box you see around the input. That's the
-  // innermost ancestor of the editor with a visible border that also holds the input's buttons.
-  // (Outer wrappers with only a background are skipped – they can start above the visible box.)
+  // The chat input box: the closest ancestor of the editor that also holds the input's buttons.
   function findComposerBox() {
     const editor = findEditor();
     if (!editor) return null;
-    const er = editor.getBoundingClientRect();
-    let framed = null;
-    for (let el = editor.parentElement; el && el !== document.body; el = el.parentElement) {
-      const r = el.getBoundingClientRect();
-      if (r.height > er.height + 200) break; // grown far beyond the input – we've left the box
-      if (!el.querySelector('button')) continue;
-      const cs = getComputedStyle(el);
-      if (parseFloat(cs.borderTopWidth) > 0 && cs.borderTopStyle !== 'none') return el;
-      if (!framed && parseFloat(cs.borderRadius) >= 8) framed = el;
-    }
-    if (framed) return framed;
     let el = editor.parentElement;
     while (el && el !== document.body && !el.querySelector('button')) el = el.parentElement;
     return el && el !== document.body ? el : editor;
@@ -541,36 +528,16 @@
 
   let usageBox = null;
   const usageResize = typeof ResizeObserver === 'function' ? new ResizeObserver(() => positionUsageBar()) : null;
-  const USAGE_TOP = 8; // px from the top edge of the input box to the line
-
-  // The line sits inside the input box, at the top. The box gets extra top padding so the
-  // line doesn't cover the text; the original padding is remembered and restored.
-  function reserveSpace(box, on) {
-    if (!box) return;
-    if (!on) {
-      if ('chimePad' in box.dataset) { box.style.paddingTop = box.dataset.chimePad; delete box.dataset.chimePad; }
-      return;
-    }
-    if (!('chimePad' in box.dataset)) box.dataset.chimePad = box.style.paddingTop;
-    box.style.paddingTop = '';
-    const orig = parseFloat(getComputedStyle(box).paddingTop) || 0;
-    const want = USAGE_TOP + usageBar.offsetHeight + Math.max(4, orig - USAGE_TOP);
-    box.style.paddingTop = Math.max(orig, want) + 'px';
-  }
 
   function positionUsageBar() {
     if (!usageBar || !usageBox) return;
     const r = usageBox.getBoundingClientRect();
     if (!usageBox.isConnected || r.width === 0) { usageBar.style.display = 'none'; return; }
     usageBar.style.display = 'flex';
-    const cs = getComputedStyle(usageBox);
-    if (!usageBox.style.paddingTop || usageBox.dataset.chimeH !== String(usageBar.offsetHeight)) {
-      usageBox.dataset.chimeH = usageBar.offsetHeight;
-      reserveSpace(usageBox, true);
-    }
-    usageBar.style.left = Math.round(r.left + (parseFloat(cs.borderLeftWidth) || 0) + 12) + 'px';
-    usageBar.style.top = Math.round(r.top + (parseFloat(cs.borderTopWidth) || 0) + USAGE_TOP) + 'px';
-    usageBar.style.color = cs.color;
+    usageBar.style.left = Math.round(r.left + 10) + 'px';
+    // The line's middle sits 12 px above the box – the same spot as in v1.11.1.
+    usageBar.style.top = Math.round(r.top - 12 - usageBar.offsetHeight / 2) + 'px';
+    usageBar.style.color = getComputedStyle(usageBox).color;
   }
 
   function placeUsageBar() {
@@ -581,7 +548,6 @@
       const box = findComposerBox();
       if (box !== usageBox) {
         if (usageResize) { usageResize.disconnect(); if (box) usageResize.observe(box); }
-        reserveSpace(usageBox, false);
         usageBox = box;
         log('Usage line attached to', box);
       }
@@ -605,11 +571,11 @@
   // Check the usage line from the console: claudeChimeUsage()
   window.claudeChimeUsage = () => {
     refreshUsage();
-    return { version: '1.12.3', enabled: CONFIG.SHOW_USAGE, inputFound: !!usageBox, input: usageBox, usage: usageData, error: usageError, cache: cacheState() };
+    return { version: '1.12.4', enabled: CONFIG.SHOW_USAGE, inputFound: !!usageBox, input: usageBox, usage: usageData, error: usageError, cache: cacheState() };
   };
 
   // Test from the console: claudeChimeTest()
   window.claudeChimeTest = () => { playChime(); return 'Played test chime'; };
 
-  console.log('[Claude-chime] v1.12.3 loaded – test with claudeChimeTest()');
+  console.log('[Claude-chime] v1.12.4 loaded – test with claudeChimeTest()');
 })();
