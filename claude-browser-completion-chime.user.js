@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Browser Completion Chime
 // @namespace    https://github.com/lytken-de/claude-browser-completion-chime
-// @version      1.13.3
+// @version      1.13.4
 // @description  Plays an audio notification when Claude.ai finishes generating a response, shows a red dot on the tab while Claude is working, and shows your usage limits in the chat input.
 // @author       lytken-de
 // @license      MIT
@@ -17,6 +17,7 @@
 
 (function () {
   'use strict';
+  const VERSION = '1.13.4';
 
   // ---------- Settings ----------
   const CONFIG = {
@@ -592,6 +593,9 @@
       if (btn.closest('#claude-chime-usage')) return;
       const r = btn.getBoundingClientRect();
       if (r.width === 0 || r.width > 64) return;
+      // Only a button left of the text, or right under its start, counts as the "+"
+      // (never e.g. the send button at the far right).
+      if (r.right > textLeft + 2 && Math.abs(r.left - textLeft) > 24) return;
       if (!plus || r.left < plus.left) plus = r;
     });
     let iconLeft = plus ? plus.left + plus.width / 2 - ICON_W / 2 - barLeft : textLeft - barLeft - ICON_W - ICON_GAP;
@@ -646,11 +650,36 @@
   // Check the usage line from the console: claudeChimeUsage()
   window.claudeChimeUsage = () => {
     refreshUsage();
-    return { version: '1.13.3', enabled: CONFIG.SHOW_USAGE, inputFound: !!usageBox, input: usageBox, lineIn: usageHost, usage: usageData, error: usageError, cache: cacheState() };
+    return { version: VERSION, enabled: CONFIG.SHOW_USAGE, inputFound: !!usageBox, input: usageBox, lineIn: usageHost, usage: usageData, error: usageError, cache: cacheState() };
+  };
+
+  // Layout of the chat input, for bug reports: copy(claudeChimeLayout()) and paste it.
+  window.claudeChimeLayout = () => {
+    const box = findComposerBox();
+    if (!box) return 'No chat input found';
+    const lines = [];
+    const walk = (el, depth) => {
+      if (depth > 9 || lines.length > 120) return;
+      const cs = getComputedStyle(el);
+      const r = el.getBoundingClientRect();
+      const lay = cs.display + (cs.display.includes('flex') ? ' ' + cs.flexDirection + (cs.flexWrap === 'wrap' ? ' wrap' : '') : '') +
+        (cs.display.includes('grid') ? ' cols[' + cs.gridTemplateColumns + '] rows[' + cs.gridTemplateRows + '] areas[' + cs.gridTemplateAreas + ']' : '');
+      const label = el.getAttribute('aria-label') || el.getAttribute('data-testid') || '';
+      lines.push('  '.repeat(depth) + el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') +
+        (label ? ' "' + label + '"' : '') + ' | ' + lay + ' | ' + Math.round(r.left) + ',' + Math.round(r.top) +
+        ' ' + Math.round(r.width) + 'x' + Math.round(r.height) +
+        (cs.overflow !== 'visible' ? ' overflow:' + cs.overflow : '') + (cs.position !== 'static' ? ' ' + cs.position : '') +
+        (cs.gridArea && cs.gridArea !== 'auto' && cs.gridArea !== 'auto / auto / auto / auto' ? ' area:' + cs.gridArea : '') +
+        (el.matches('.ProseMirror,textarea,[contenteditable]') ? '  <- text field' : ''));
+      if (el.matches('svg,button,.ProseMirror,textarea,#claude-chime-usage')) return;
+      for (const c of el.children) walk(c, depth + 1);
+    };
+    walk(box, 0);
+    return 'v' + VERSION + ' ' + location.pathname.split('/')[1] + '\n' + lines.join('\n');
   };
 
   // Test from the console: claudeChimeTest()
   window.claudeChimeTest = () => { playChime(); return 'Played test chime'; };
 
-  console.log('[Claude-chime] v1.13.3 loaded – test with claudeChimeTest()');
+  console.log('[Claude-chime] v' + VERSION + ' loaded – test with claudeChimeTest()');
 })();
