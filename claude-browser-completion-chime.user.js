@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Browser Completion Chime
 // @namespace    https://github.com/lytken-de/claude-browser-completion-chime
-// @version      1.13.2
+// @version      1.13.3
 // @description  Plays an audio notification when Claude.ai finishes generating a response, shows a red dot on the tab while Claude is working, and shows your usage limits in the chat input.
 // @author       lytken-de
 // @license      MIT
@@ -349,11 +349,11 @@
   //   /api/organizations/{org}/usage → { five_hour: { utilization, resets_at }, seven_day: { … } }
   const USAGE_ICON = '<svg width="24" height="24" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M2.5 11.5a5.5 5.5 0 1 1 11 0"/><path d="M8 11.5l3-4"/><circle cx="8" cy="11.5" r=".9" fill="currentColor" stroke="none"/></svg>';
   const USAGE_CSS = `
-    #claude-chime-usage{position:static;display:flex;align-items:center;gap:10px;margin:0 0 6px;
-      padding:0;box-sizing:border-box;max-width:100%;overflow:hidden;color:inherit;
+    #claude-chime-usage{position:relative;display:flex;align-items:center;gap:10px;margin:0 0 6px;
+      min-height:24px;padding:0;box-sizing:border-box;max-width:100%;overflow:hidden;color:inherit;
       font:12px/16px system-ui,-apple-system,"Segoe UI",sans-serif;cursor:pointer;user-select:none;
       font-variant-numeric:tabular-nums;white-space:nowrap}
-    #claude-chime-usage .cc-icon{display:flex;opacity:.55}
+    #claude-chime-usage .cc-icon{display:flex;opacity:.55;position:absolute;left:var(--cc-icon-left,0);top:50%;transform:translateY(-50%)}
     #claude-chime-usage .cc-seg{display:flex;align-items:center;gap:6px}
     #claude-chime-usage .cc-label{opacity:.55}
     #claude-chime-usage .cc-val{font-weight:600;opacity:.9}
@@ -575,17 +575,31 @@
     return host || box;
   }
 
-  // Start the line where the typed text starts (e.g. after the "+" button), not at the box edge.
+  // The icon sits centred over the box's "+" button (its leftmost button), and the numbers
+  // ("5h …") start exactly where the typed text starts. If "+" isn't left of the text (e.g.
+  // it's below it), the numbers follow right after the icon instead.
+  const ICON_W = 24;
+  const ICON_GAP = 10;
   function alignUsageBar() {
     const editor = findEditor();
     if (!editor || !usageBar.isConnected) return;
     const ecs = getComputedStyle(editor);
     const textLeft = editor.getBoundingClientRect().left + (parseFloat(ecs.borderLeftWidth) || 0) +
       (parseFloat(ecs.paddingLeft) || 0);
-    const barLeft = usageBar.getBoundingClientRect().left; // the border-box edge; padding sits inside it
-    const ICON_INSET = 4; // the gauge is drawn ~4 px in from its own left edge
-    const pad = Math.max(0, Math.round(textLeft - barLeft - ICON_INSET)) + 'px';
+    const barLeft = usageBar.getBoundingClientRect().left; // border-box edge; padding sits inside it
+    let plus = null;
+    (usageBox || usageHost).querySelectorAll('button').forEach((btn) => {
+      if (btn.closest('#claude-chime-usage')) return;
+      const r = btn.getBoundingClientRect();
+      if (r.width === 0 || r.width > 64) return;
+      if (!plus || r.left < plus.left) plus = r;
+    });
+    let iconLeft = plus ? plus.left + plus.width / 2 - ICON_W / 2 - barLeft : textLeft - barLeft - ICON_W - ICON_GAP;
+    iconLeft = Math.max(0, Math.round(iconLeft));
+    const pad = Math.round(Math.max(textLeft - barLeft, iconLeft + ICON_W + ICON_GAP)) + 'px';
     if (usageBar.style.paddingLeft !== pad) usageBar.style.paddingLeft = pad;
+    const il = iconLeft + 'px';
+    if (usageBar.style.getPropertyValue('--cc-icon-left') !== il) usageBar.style.setProperty('--cc-icon-left', il);
   }
 
   function placeUsageBar() {
@@ -632,11 +646,11 @@
   // Check the usage line from the console: claudeChimeUsage()
   window.claudeChimeUsage = () => {
     refreshUsage();
-    return { version: '1.13.2', enabled: CONFIG.SHOW_USAGE, inputFound: !!usageBox, input: usageBox, lineIn: usageHost, usage: usageData, error: usageError, cache: cacheState() };
+    return { version: '1.13.3', enabled: CONFIG.SHOW_USAGE, inputFound: !!usageBox, input: usageBox, lineIn: usageHost, usage: usageData, error: usageError, cache: cacheState() };
   };
 
   // Test from the console: claudeChimeTest()
   window.claudeChimeTest = () => { playChime(); return 'Played test chime'; };
 
-  console.log('[Claude-chime] v1.13.2 loaded – test with claudeChimeTest()');
+  console.log('[Claude-chime] v1.13.3 loaded – test with claudeChimeTest()');
 })();
