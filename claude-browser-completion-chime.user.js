@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Browser Completion Chime
 // @namespace    https://github.com/lytken-de/claude-browser-completion-chime
-// @version      1.12.5
+// @version      1.13.0
 // @description  Plays an audio notification when Claude.ai finishes generating a response, shows a red dot on the tab while Claude is working, and shows your usage limits above the chat input.
 // @author       lytken-de
 // @license      MIT
@@ -349,7 +349,8 @@
   //   /api/organizations/{org}/usage → { five_hour: { utilization, resets_at }, seven_day: { … } }
   const USAGE_ICON = '<svg width="24" height="24" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M2.5 11.5a5.5 5.5 0 1 1 11 0"/><path d="M8 11.5l3-4"/><circle cx="8" cy="11.5" r=".9" fill="currentColor" stroke="none"/></svg>';
   const USAGE_CSS = `
-    #claude-chime-usage{position:fixed;z-index:2147483000;display:none;align-items:center;gap:10px;
+    #claude-chime-usage{position:static;display:flex;align-items:center;gap:10px;margin:0 0 6px;
+      padding:0 2px;box-sizing:border-box;max-width:100%;overflow:hidden;color:inherit;
       font:12px/16px system-ui,-apple-system,"Segoe UI",sans-serif;cursor:pointer;user-select:none;
       font-variant-numeric:tabular-nums;white-space:nowrap}
     #claude-chime-usage .cc-icon{display:flex;opacity:.55}
@@ -494,8 +495,6 @@
     style.id = 'claude-chime-usage-style';
     style.textContent = USAGE_CSS;
     document.head.appendChild(style);
-    // Positioned on top of the page (not inside Claude.ai's own elements), so it works
-    // whatever the chat input is built from and isn't removed when the page re-renders.
     usageBar = document.createElement('div');
     usageBar.id = 'claude-chime-usage';
     usageBar.addEventListener('click', refreshUsage);
@@ -539,55 +538,46 @@
     return el && el !== document.body ? el : editor;
   }
 
-  let usageBox = null;
-  const usageResize = typeof ResizeObserver === 'function' ? new ResizeObserver(() => positionUsageBar()) : null;
-  const USAGE_TOP = 8; // px from the top edge of the input box to the line
+  // The line is a real element inside the input box (its first child), so the browser lays it
+  // out with the box: it scrolls, resizes and moves with it, and takes its own room above the
+  // text. Claude.ai may re-render the box and drop it – then it's simply put back.
+  let usageBox = null;   // the input box
+  let usageHost = null;  // the element inside it that holds the line
 
-  // The line sits inside the input box, at the top. The box gets extra top padding so the
-  // line doesn't cover the text; the original padding is remembered and restored.
-  function reserveSpace(box, on) {
-    if (!box) return;
-    if (!on) {
-      if ('chimePad' in box.dataset) { box.style.paddingTop = box.dataset.chimePad; delete box.dataset.chimePad; }
-      return;
+  // The outermost element from the editor up to the box that stacks its children vertically,
+  // so the line gets a row of its own (never squeezed beside the text field in a flex row).
+  function findUsageHost(box) {
+    const editor = findEditor();
+    let host = null;
+    for (let el = editor && editor.parentElement; el; el = el.parentElement) {
+      const cs = getComputedStyle(el);
+      const row = (cs.display.includes('flex') && !cs.flexDirection.startsWith('column')) ||
+        cs.display.includes('grid') || cs.display.includes('inline');
+      if (!row) host = el;
+      if (el === box) break;
     }
-    if (!('chimePad' in box.dataset)) box.dataset.chimePad = box.style.paddingTop;
-    box.style.paddingTop = '';
-    const orig = parseFloat(getComputedStyle(box).paddingTop) || 0;
-    const want = USAGE_TOP + usageBar.offsetHeight + Math.max(4, orig - USAGE_TOP);
-    box.style.paddingTop = Math.max(orig, want) + 'px';
-  }
-
-  function positionUsageBar() {
-    if (!usageBar || !usageBox) return;
-    const r = usageBox.getBoundingClientRect();
-    if (!usageBox.isConnected || r.width === 0) { usageBar.style.display = 'none'; return; }
-    usageBar.style.display = 'flex';
-    const cs = getComputedStyle(usageBox);
-    if (!usageBox.style.paddingTop || usageBox.dataset.chimeH !== String(usageBar.offsetHeight)) {
-      usageBox.dataset.chimeH = usageBar.offsetHeight;
-      reserveSpace(usageBox, true);
-    }
-    usageBar.style.left = Math.round(r.left + (parseFloat(cs.borderLeftWidth) || 0) + 12) + 'px';
-    usageBar.style.top = Math.round(r.top + (parseFloat(cs.borderTopWidth) || 0) + USAGE_TOP) + 'px';
-    usageBar.style.color = cs.color;
+    return host || box;
   }
 
   function placeUsageBar() {
     if (!CONFIG.SHOW_USAGE) return;
     try {
       ensureUsageBar();
-      if (!usageBar.isConnected) document.body.appendChild(usageBar);
       const box = findComposerBox();
       if (box !== usageBox) {
-        if (usageResize) { usageResize.disconnect(); if (box) usageResize.observe(box); }
-        reserveSpace(usageBox, false);
         usageBox = box;
-        log('Usage line attached to', box);
+        usageHost = box && findUsageHost(box);
+        log('Usage line attached to', usageHost);
       }
-      if (!box) { usageBar.style.display = 'none'; return; }
+      if (!usageHost || !usageHost.isConnected) {
+        usageBox = usageHost = null;
+        if (usageBar.isConnected) usageBar.remove();
+        return;
+      }
+      if (usageBar.parentElement !== usageHost || usageHost.firstElementChild !== usageBar) {
+        usageHost.insertBefore(usageBar, usageHost.firstChild);
+      }
       renderUsage(); // keeps the Warm/Cold countdown current
-      positionUsageBar();
     } catch (e) { log('Usage line placement failed:', e); }
   }
 
@@ -595,7 +585,13 @@
     placeUsageBar();
     refreshUsage();
     setInterval(placeUsageBar, 500);
-    window.addEventListener('resize', positionUsageBar);
+    // Put it back right away when Claude.ai re-renders the input (not only on the next tick).
+    let placeQueued = false;
+    new MutationObserver(() => {
+      if (placeQueued || (usageBar && usageBar.isConnected && usageHost && usageHost.firstElementChild === usageBar)) return;
+      placeQueued = true;
+      requestAnimationFrame(() => { placeQueued = false; placeUsageBar(); });
+    }).observe(document.body, { childList: true, subtree: true });
     setInterval(() => { if (!document.hidden) refreshUsage(); }, CONFIG.USAGE_REFRESH_MS);
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden && Date.now() - usageFetchedAt > 60000) refreshUsage(); // back on the tab
@@ -611,5 +607,5 @@
   // Test from the console: claudeChimeTest()
   window.claudeChimeTest = () => { playChime(); return 'Played test chime'; };
 
-  console.log('[Claude-chime] v1.12.5 loaded – test with claudeChimeTest()');
+  console.log('[Claude-chime] v1.13.0 loaded – test with claudeChimeTest()');
 })();
