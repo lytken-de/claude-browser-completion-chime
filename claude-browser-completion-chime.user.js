@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Browser Completion Chime
 // @namespace    https://github.com/lytken-de/claude-browser-completion-chime
-// @version      1.13.0
+// @version      1.13.1
 // @description  Plays an audio notification when Claude.ai finishes generating a response, shows a red dot on the tab while Claude is working, and shows your usage limits in the chat input.
 // @author       lytken-de
 // @license      MIT
@@ -516,26 +516,42 @@
     return best;
   }
 
-  // The chat input box: the outermost framed (border or background) ancestor of the editor
-  // that still holds the input's buttons – i.e. the rounded box you see around the input.
+  // The chat input box: the rounded box you SEE around the input. That's the innermost
+  // ancestor of the editor that holds the input's buttons and actually draws a frame – a
+  // visible border, a shadow, or a background different from what's behind it. (Outer
+  // wrappers can also hold buttons, e.g. the model picker row below the box, and start
+  // higher up – picking one of those put the line above the box instead of inside it.)
+  const isClear = (c) => !c || c === 'transparent' || /rgba\(.*,\s*0\)$/.test(c);
+  function bgBehind(el) {
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      const c = getComputedStyle(p).backgroundColor;
+      if (!isClear(c)) return c;
+    }
+    return 'rgb(255, 255, 255)';
+  }
+  function drawsFrame(el) {
+    const cs = getComputedStyle(el);
+    const border = ['Top', 'Right', 'Bottom', 'Left'].some((s) =>
+      parseFloat(cs['border' + s + 'Width']) > 0 && cs['border' + s + 'Style'] !== 'none' &&
+      !isClear(cs['border' + s + 'Color']));
+    if (border) return true;
+    if (cs.boxShadow && cs.boxShadow !== 'none') return true;
+    if (cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0 && !isClear(cs.outlineColor)) return true;
+    return !isClear(cs.backgroundColor) && cs.backgroundColor !== bgBehind(el);
+  }
   function findComposerBox() {
     const editor = findEditor();
     if (!editor) return null;
     const er = editor.getBoundingClientRect();
-    let box = null;
+    let fallback = null;
     for (let el = editor.parentElement; el && el !== document.body; el = el.parentElement) {
       const r = el.getBoundingClientRect();
-      if (r.height > er.height + 200) break; // grown far beyond the input – we've left the box
+      if (r.height > er.height + 300) break; // grown far beyond the input – we've left the box
       if (!el.querySelector('button')) continue;
-      const cs = getComputedStyle(el);
-      const framed = parseFloat(cs.borderTopWidth) > 0 || parseFloat(cs.borderRadius) >= 8 ||
-        (cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent');
-      if (framed) box = el;
+      if (!fallback) fallback = el;
+      if (r.width >= er.width && drawsFrame(el)) return el;
     }
-    if (box) return box;
-    let el = editor.parentElement;
-    while (el && el !== document.body && !el.querySelector('button')) el = el.parentElement;
-    return el && el !== document.body ? el : editor;
+    return fallback || editor.parentElement;
   }
 
   // The line is a real element inside the input box (its first child), so the browser lays it
@@ -601,11 +617,11 @@
   // Check the usage line from the console: claudeChimeUsage()
   window.claudeChimeUsage = () => {
     refreshUsage();
-    return { enabled: CONFIG.SHOW_USAGE, inputFound: !!usageBox, input: usageBox, usage: usageData, error: usageError, cache: cacheState() };
+    return { version: '1.13.1', enabled: CONFIG.SHOW_USAGE, inputFound: !!usageBox, input: usageBox, lineIn: usageHost, usage: usageData, error: usageError, cache: cacheState() };
   };
 
   // Test from the console: claudeChimeTest()
   window.claudeChimeTest = () => { playChime(); return 'Played test chime'; };
 
-  console.log('[Claude-chime] v1.13.0 loaded – test with claudeChimeTest()');
+  console.log('[Claude-chime] v1.13.1 loaded – test with claudeChimeTest()');
 })();
