@@ -45,7 +45,7 @@ Edit the `CONFIG` block at the top of the script:
 | `VOLUME` | `1.0` | `1.0` = the sound file's own volume, `0.5` = half. |
 | `KEEP_AWAKE` | `false` | Plays a very faint noise while Claude works, so Bluetooth headphones/speakers don't fall asleep and swallow the chime. Only needed if the chime goes missing on Bluetooth. |
 | `SILENCE_BEFORE_MS` | `0` | Extra silence before the chime. |
-| `SHOW_USAGE` | `true` | Shows a line above the chat input with your usage limits: the 5-hour limit and when it resets, the weekly limit, and a **Warm/Cold** badge for the prompt cache. The percentages turn orange at 75 % and red at 90 %. Hover for details, click to refresh. If the line doesn't show, run `claudeChimeUsage()` in the console. |
+| `SHOW_USAGE` | `true` | Shows a line at the top of the chat input box with your usage limits: the 5-hour limit and when it resets, the weekly limit, and a **Warm/Cold** badge for the prompt cache. The percentages turn orange at 75 % and red at 90 %. Hover for details, click to refresh. If the line doesn't show, run `claudeChimeUsage()` in the console. |
 | `CACHE_TTL_MIN` | `'auto'` | Prompt cache lifetime for the Warm/Cold badge, in minutes. `'auto'` = 60 in Claude Code (claude.ai/code), 5 elsewhere. The badge is an **estimate**: there's no API for the cache, so it shows *Warm* (with minutes left) while less than this time has passed since Claude last worked in the chat, and *Cold* after. Nothing is shown for a chat the script hasn't seen Claude work in. |
 | `USAGE_REFRESH_MS` | `120000` | How often the usage is fetched. It's also fetched right after each response and when you come back to the tab. |
 | `DEBUG` | `false` | `true` = logs `[Claude-chime]` state changes to the browser console. |
@@ -68,7 +68,7 @@ claudeChimeTest()
 | No chime on quick replies | Expected: the reply was shorter than `MIN_DURATION_MS`. Turn on `DEBUG` to see `Too short – … ms`. |
 | Chime in the middle of a response | The stop button was gone longer than `DONE_DELAY_MS` (e.g. Claude was waiting for your approval). Increase `DONE_DELAY_MS` if it happens without a reason. |
 | 🔴 in the tab title instead of a dot on the icon | The icon couldn't be drawn, e.g. because an anti-fingerprinting tool blocks canvas. The title is used as a fallback. |
-| `Usage unavailable` above the chat input | The usage endpoint failed or changed. Hover the line to see the error; set `SHOW_USAGE: false` to hide it. |
+| `Usage unavailable` in the chat input | The usage endpoint failed or changed. Hover the line to see the error; set `SHOW_USAGE: false` to hide it. |
 | No chime when switching chats in the same tab | By design: switching away would otherwise look like "done". Keep long-running chats in their own tab. |
 
 ### Note on anti-fingerprinting tools

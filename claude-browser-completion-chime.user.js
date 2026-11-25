@@ -2,7 +2,7 @@
 // @name         Claude Browser Completion Chime
 // @namespace    https://github.com/lytken-de/claude-browser-completion-chime
 // @version      1.13.0
-// @description  Plays an audio notification when Claude.ai finishes generating a response, shows a red dot on the tab while Claude is working, and shows your usage limits above the chat input.
+// @description  Plays an audio notification when Claude.ai finishes generating a response, shows a red dot on the tab while Claude is working, and shows your usage limits in the chat input.
 // @author       lytken-de
 // @license      MIT
 // @homepageURL  https://github.com/lytken-de/claude-browser-completion-chime
@@ -30,7 +30,7 @@
     VOLUME: 1.0,                // 1.0 = the sound file's own volume, 0.5 = half
     KEEP_AWAKE: false,          // very faint noise while Claude works, so Bluetooth audio doesn't fall asleep
     SILENCE_BEFORE_MS: 0,       // extra silence before the chime
-    SHOW_USAGE: true,           // line above the chat input: "5h 8% Reset: 23:40 - W 14%"
+    SHOW_USAGE: true,           // line at the top of the chat input: "5h 8% Reset: 23:40 - W 14%"
     USAGE_REFRESH_MS: 120000,   // how often the usage is fetched (also right after each response)
     CACHE_TTL_MIN: 'auto',      // prompt cache lifetime for the Warm/Cold estimate, in minutes.
                                 // 'auto' = 60 in Claude Code (claude.ai/code), 5 elsewhere
