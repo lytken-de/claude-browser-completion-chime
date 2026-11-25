@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Browser Completion Chime
 // @namespace    https://github.com/lytken-de/claude-browser-completion-chime
-// @version      1.13.1
+// @version      1.13.2
 // @description  Plays an audio notification when Claude.ai finishes generating a response, shows a red dot on the tab while Claude is working, and shows your usage limits in the chat input.
 // @author       lytken-de
 // @license      MIT
@@ -350,7 +350,7 @@
   const USAGE_ICON = '<svg width="24" height="24" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M2.5 11.5a5.5 5.5 0 1 1 11 0"/><path d="M8 11.5l3-4"/><circle cx="8" cy="11.5" r=".9" fill="currentColor" stroke="none"/></svg>';
   const USAGE_CSS = `
     #claude-chime-usage{position:static;display:flex;align-items:center;gap:10px;margin:0 0 6px;
-      padding:0 2px;box-sizing:border-box;max-width:100%;overflow:hidden;color:inherit;
+      padding:0;box-sizing:border-box;max-width:100%;overflow:hidden;color:inherit;
       font:12px/16px system-ui,-apple-system,"Segoe UI",sans-serif;cursor:pointer;user-select:none;
       font-variant-numeric:tabular-nums;white-space:nowrap}
     #claude-chime-usage .cc-icon{display:flex;opacity:.55}
@@ -575,6 +575,19 @@
     return host || box;
   }
 
+  // Start the line where the typed text starts (e.g. after the "+" button), not at the box edge.
+  function alignUsageBar() {
+    const editor = findEditor();
+    if (!editor || !usageBar.isConnected) return;
+    const ecs = getComputedStyle(editor);
+    const textLeft = editor.getBoundingClientRect().left + (parseFloat(ecs.borderLeftWidth) || 0) +
+      (parseFloat(ecs.paddingLeft) || 0);
+    const barLeft = usageBar.getBoundingClientRect().left; // the border-box edge; padding sits inside it
+    const ICON_INSET = 4; // the gauge is drawn ~4 px in from its own left edge
+    const pad = Math.max(0, Math.round(textLeft - barLeft - ICON_INSET)) + 'px';
+    if (usageBar.style.paddingLeft !== pad) usageBar.style.paddingLeft = pad;
+  }
+
   function placeUsageBar() {
     if (!CONFIG.SHOW_USAGE) return;
     try {
@@ -593,6 +606,7 @@
       if (usageBar.parentElement !== usageHost || usageHost.firstElementChild !== usageBar) {
         usageHost.insertBefore(usageBar, usageHost.firstChild);
       }
+      alignUsageBar();
       renderUsage(); // keeps the Warm/Cold countdown current
     } catch (e) { log('Usage line placement failed:', e); }
   }
@@ -601,6 +615,7 @@
     placeUsageBar();
     refreshUsage();
     setInterval(placeUsageBar, 500);
+    window.addEventListener('resize', () => { if (usageBar) alignUsageBar(); });
     // Put it back right away when Claude.ai re-renders the input (not only on the next tick).
     let placeQueued = false;
     new MutationObserver(() => {
@@ -617,11 +632,11 @@
   // Check the usage line from the console: claudeChimeUsage()
   window.claudeChimeUsage = () => {
     refreshUsage();
-    return { version: '1.13.1', enabled: CONFIG.SHOW_USAGE, inputFound: !!usageBox, input: usageBox, lineIn: usageHost, usage: usageData, error: usageError, cache: cacheState() };
+    return { version: '1.13.2', enabled: CONFIG.SHOW_USAGE, inputFound: !!usageBox, input: usageBox, lineIn: usageHost, usage: usageData, error: usageError, cache: cacheState() };
   };
 
   // Test from the console: claudeChimeTest()
   window.claudeChimeTest = () => { playChime(); return 'Played test chime'; };
 
-  console.log('[Claude-chime] v1.13.1 loaded – test with claudeChimeTest()');
+  console.log('[Claude-chime] v1.13.2 loaded – test with claudeChimeTest()');
 })();
